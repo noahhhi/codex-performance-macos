@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Performance for macOS"
+  short_description: "Deploy high-priority Codex scheduling safely"
+  default_prompt: "Use $codex-performance-macos to install or verify high-priority Codex scheduling on this Mac."

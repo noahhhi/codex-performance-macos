@@ -1,0 +1,42 @@
+#!/bin/zsh
+set -eu
+
+if [[ $(/usr/bin/id -u) == 0 ]]; then
+  print -u2 "Run this uninstaller as your normal login user, not with sudo."
+  exit 77
+fi
+
+codex_home=${CODEX_HOME:-${HOME}/.codex}
+bin_directory="${codex_home}/bin"
+run_directory="${codex_home}/run"
+agents_file="${codex_home}/AGENTS.md"
+target_uid=$(/usr/bin/id -u)
+daemon_label=local.codex.performance-keeper
+daemon_binary=/Library/PrivilegedHelperTools/local.codex-performance-keeper
+daemon_plist=/Library/LaunchDaemons/local.codex.performance-keeper.plist
+managed_begin='<!-- BEGIN codex-performance-macos -->'
+managed_end='<!-- END codex-performance-macos -->'
+temporary_file=$(/usr/bin/mktemp "${TMPDIR:-/tmp}/codex-agents.XXXXXX")
+trap '/bin/rm -f "${temporary_file}"' EXIT
+
+if [[ -f ${agents_file} ]]; then
+  /usr/bin/awk -v begin="${managed_begin}" -v end="${managed_end}" '
+    $0 == begin { skipping = 1; next }
+    $0 == end { skipping = 0; next }
+    !skipping { print }
+  ' "${agents_file}" > "${temporary_file}"
+  /usr/bin/install -m 0644 "${temporary_file}" "${agents_file}"
+fi
+
+/usr/bin/pkill -TERM -u "${target_uid}" -f "${bin_directory}/codex-performance-exec-bin --broker" >/dev/null 2>&1 || true
+/bin/rm -f "${bin_directory}/codex-performance-exec" \
+  "${bin_directory}/codex-performance-exec-bin" \
+  "${run_directory}/performance-broker.sock" \
+  "${run_directory}/performance-broker.sock.lock"
+
+print "Administrator authorization removes only the fixed QoS keeper and LaunchDaemon."
+/usr/bin/sudo -v
+/usr/bin/sudo /bin/launchctl bootout "system/${daemon_label}" >/dev/null 2>&1 || true
+/usr/bin/sudo /bin/rm -f "${daemon_binary}" "${daemon_plist}"
+/usr/bin/sudo -k
+print "Uninstalled. The Skill directory was retained for repair or reinstallation."

@@ -1,0 +1,28 @@
+#!/bin/zsh
+set -eu
+
+script_directory=${0:A:h}
+source_directory="${script_directory}/src"
+temporary_directory=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/codex-performance-test.XXXXXX")
+trap '/bin/rm -rf "${temporary_directory}"' EXIT
+
+for script in "${script_directory}/install" "${script_directory}/status" \
+              "${script_directory}/uninstall" "${source_directory}/codex-performance-exec"; do
+  /bin/zsh -n "${script}"
+done
+
+/usr/bin/xcrun clang -O2 -Wall -Wextra -Werror -mmacosx-version-min=11.0 \
+  "${source_directory}/codex-performance-exec.c" \
+  -o "${temporary_directory}/codex-performance-exec-bin"
+/usr/bin/xcrun clang -O2 -Wall -Wextra -Werror -mmacosx-version-min=11.0 \
+  "${source_directory}/codex-qos-keeper.c" \
+  -o "${temporary_directory}/codex-qos-keeper"
+
+personal_uid_pattern='uid_t target_uid = 5''01'
+if /usr/bin/grep -R --exclude=test -E "/Users/|${personal_uid_pattern}|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY" \
+     "${script_directory:h}"; then
+  print -u2 "Sensitive or machine-specific content detected."
+  exit 1
+fi
+
+print "Build, shell syntax, and privacy checks passed."

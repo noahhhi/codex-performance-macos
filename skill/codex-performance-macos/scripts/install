@@ -1,0 +1,143 @@
+#!/bin/zsh
+set -eu
+
+dry_run=0
+if [[ ${1:-} == --dry-run ]]; then
+  dry_run=1
+  shift
+fi
+if (( $# != 0 )); then
+  print -u2 "usage: install [--dry-run]"
+  exit 64
+fi
+
+if [[ $(/usr/bin/uname -s) != Darwin || $(/usr/bin/uname -m) != arm64 ]]; then
+  print -u2 "codex-performance-macos supports Apple silicon Macs only."
+  exit 69
+fi
+
+script_directory=${0:A:h}
+skill_directory=${script_directory:h}
+source_directory="${script_directory}/src"
+codex_home=${CODEX_HOME:-${HOME}/.codex}
+bin_directory="${codex_home}/bin"
+run_directory="${codex_home}/run"
+target_skill_directory="${codex_home}/skills/codex-performance-macos"
+target_uid=$(/usr/bin/id -u)
+target_user=$(/usr/bin/id -un)
+daemon_label=local.codex.performance-keeper
+daemon_binary=/Library/PrivilegedHelperTools/local.codex-performance-keeper
+daemon_plist=/Library/LaunchDaemons/local.codex.performance-keeper.plist
+agents_file="${codex_home}/AGENTS.md"
+managed_begin='<!-- BEGIN codex-performance-macos -->'
+managed_end='<!-- END codex-performance-macos -->'
+
+if [[ ${target_uid} == 0 ]]; then
+  print -u2 "Run this installer as your normal login user, not with sudo."
+  exit 77
+fi
+if ! /usr/bin/xcrun --find clang >/dev/null 2>&1; then
+  print -u2 "Xcode Command Line Tools are required. Run: xcode-select --install"
+  exit 69
+fi
+if [[ ! -d /Applications/ChatGPT.app ]]; then
+  print -u2 "Install ChatGPT in /Applications before continuing."
+  exit 69
+fi
+
+temporary_directory=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/codex-performance.XXXXXX")
+trap '/bin/rm -rf "${temporary_directory}"' EXIT
+
+print "Building host binaries..."
+/usr/bin/xcrun clang -O2 -Wall -Wextra -Werror -mmacosx-version-min=11.0 \
+  "${source_directory}/codex-performance-exec.c" \
+  -o "${temporary_directory}/codex-performance-exec-bin"
+/usr/bin/xcrun clang -O2 -Wall -Wextra -Werror -mmacosx-version-min=11.0 \
+  "${source_directory}/codex-qos-keeper.c" \
+  -o "${temporary_directory}/codex-qos-keeper"
+
+cat > "${temporary_directory}/performance-policy.md" <<EOF
+${managed_begin}
+# Apple silicon performance policy
+
+- Run every local command through \`${bin_directory}/codex-performance-exec\` when available. Exempt only installation, repair, and diagnostics of the broker itself. Codex and its commands must remain non-root.
+- For sustained parallel work, use \`hw.perflevel0.physicalcpu\` as the default heavy-job count and reduce it if foreground responsiveness suffers.
+- Use User Initiated QoS. Do not use background or maintenance QoS, negative niceness, administrator scheduling changes, or CPU-affinity hacks unless explicitly requested; macOS ultimately selects physical cores.
+${managed_end}
+EOF
+
+if [[ -f ${agents_file} ]]; then
+  /usr/bin/awk -v begin="${managed_begin}" -v end="${managed_end}" '
+    $0 == begin { skipping = 1; next }
+    $0 == end { skipping = 0; next }
+    !skipping { print }
+  ' "${agents_file}" > "${temporary_directory}/agents-base.md"
+else
+  : > "${temporary_directory}/agents-base.md"
+fi
+{
+  /bin/cat "${temporary_directory}/agents-base.md"
+  [[ ! -s ${temporary_directory}/agents-base.md ]] || print
+  /bin/cat "${temporary_directory}/performance-policy.md"
+} > "${temporary_directory}/AGENTS.md"
+
+cat > "${temporary_directory}/${daemon_label}.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${daemon_label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${daemon_binary}</string>
+    <string>--uid</string>
+    <string>${target_uid}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>ThrottleInterval</key>
+  <integer>2</integer>
+</dict>
+</plist>
+EOF
+/usr/bin/plutil -lint "${temporary_directory}/${daemon_label}.plist" >/dev/null
+
+if (( dry_run )); then
+  print "Dry run passed: binaries compile and generated policy and plist are valid."
+  exit 0
+fi
+
+/bin/mkdir -p "${bin_directory}" "${run_directory}" "${codex_home}/skills"
+/usr/bin/install -m 0755 "${temporary_directory}/codex-performance-exec-bin" \
+  "${bin_directory}/codex-performance-exec-bin"
+/usr/bin/install -m 0755 "${source_directory}/codex-performance-exec" \
+  "${bin_directory}/codex-performance-exec"
+if [[ ${skill_directory:A} != ${target_skill_directory:A} ]]; then
+  /bin/rm -rf "${target_skill_directory}"
+  /usr/bin/ditto "${skill_directory}" "${target_skill_directory}"
+fi
+/usr/bin/install -m 0644 "${temporary_directory}/AGENTS.md" "${agents_file}"
+
+print "Administrator authorization installs only the fixed QoS keeper and LaunchDaemon."
+/usr/bin/sudo -v
+/usr/bin/sudo /usr/bin/install -o root -g wheel -m 0755 \
+  "${temporary_directory}/codex-qos-keeper" "${daemon_binary}"
+/usr/bin/sudo /usr/bin/install -o root -g wheel -m 0644 \
+  "${temporary_directory}/${daemon_label}.plist" "${daemon_plist}"
+/usr/bin/sudo /bin/launchctl bootout "system/${daemon_label}" >/dev/null 2>&1 || true
+/usr/bin/sudo /bin/launchctl bootstrap system "${daemon_plist}"
+/usr/bin/sudo /bin/launchctl kickstart -k "system/${daemon_label}"
+/usr/bin/sudo -k
+
+/usr/bin/pkill -TERM -u "${target_uid}" -f "${bin_directory}/codex-performance-exec-bin --broker" >/dev/null 2>&1 || true
+/bin/rm -f "${run_directory}/performance-broker.sock" "${run_directory}/performance-broker.sock.lock"
+
+print "Verifying installation..."
+"${bin_directory}/codex-performance-exec" --self-test
+/bin/launchctl print "system/${daemon_label}" >/dev/null
+print "Installed for ${target_user} (uid ${target_uid}). Restart ChatGPT so new tasks reload AGENTS.md."
