@@ -11,12 +11,14 @@ for script in "${script_directory}/install" "${script_directory}/status" \
   /bin/zsh -n "${script}"
 done
 
-/usr/bin/xcrun clang -O2 -Wall -Wextra -Werror -mmacosx-version-min=11.0 \
-  "${source_directory}/codex-performance-exec.c" \
-  -o "${temporary_directory}/codex-performance-exec-bin"
+/usr/bin/xcrun clang -O2 -Wall -Wextra -Werror -mmacosx-version-min=11.0 "${source_directory}/codex-performance-exec.c" "${source_directory}/performance-client.c" -o "${temporary_directory}/codex-performance-exec-bin"
 /usr/bin/xcrun clang -O2 -Wall -Wextra -Werror -mmacosx-version-min=11.0 \
   "${source_directory}/codex-qos-keeper.c" \
   -o "${temporary_directory}/codex-qos-keeper"
+/usr/bin/xcrun clang -O2 -Wall -Wextra -Werror -mmacosx-version-min=11.0 "${source_directory}/performance-client.c" "${source_directory}/codex-performance-register.c" -o "${temporary_directory}/codex-performance-register"
+/usr/bin/xcrun clang -O2 -Wall -Wextra -Werror -fobjc-arc -mmacosx-version-min=11.0 "${source_directory}/performance-client.c" "${source_directory}/codex-performance-app-watcher.m" -framework AppKit -o "${temporary_directory}/codex-performance-app-watcher"
+/usr/bin/xcrun clang -O2 -Wall -Wextra -Werror -fobjc-arc -mmacosx-version-min=11.0 "${source_directory}/performance-client.c" "${source_directory}/codex-performance-open.m" -framework AppKit -o "${temporary_directory}/codex-performance-open"
+"${temporary_directory}/codex-qos-keeper" --self-test
 
 personal_uid_pattern='uid_t target_uid = 5''01'
 if /usr/bin/grep -R --exclude=test -E "/Users/|${personal_uid_pattern}|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY" \
