@@ -8,14 +8,21 @@ fi
 
 codex_home=${CODEX_HOME:-${HOME}/.codex}
 bin_directory="${codex_home}/bin"
+shim_directory="${codex_home}/performance-shims"
 run_directory="${codex_home}/run"
 agents_file="${codex_home}/AGENTS.md"
+environment_file="${HOME}/.zshenv"
+profile_file="${HOME}/.zprofile"
 target_uid=$(/usr/bin/id -u)
 daemon_label=local.codex.performance-keeper
 daemon_binary=/Library/PrivilegedHelperTools/local.codex-performance-keeper
 daemon_plist=/Library/LaunchDaemons/local.codex.performance-keeper.plist
+watcher_label=local.codex.performance-app-watcher
+watcher_plist="${HOME}/Library/LaunchAgents/${watcher_label}.plist"
 managed_begin='<!-- BEGIN codex-performance-macos -->'
 managed_end='<!-- END codex-performance-macos -->'
+path_begin='# BEGIN codex-performance-macos PATH'
+path_end='# END codex-performance-macos PATH'
 temporary_file=$(/usr/bin/mktemp "${TMPDIR:-/tmp}/codex-agents.XXXXXX")
 trap '/bin/rm -f "${temporary_file}"' EXIT
 
@@ -28,11 +35,28 @@ if [[ -f ${agents_file} ]]; then
   /usr/bin/install -m 0644 "${temporary_file}" "${agents_file}"
 fi
 
+for shell_file in "${environment_file}" "${profile_file}"; do
+  if [[ -f ${shell_file} ]]; then
+    /usr/bin/awk -v begin="${path_begin}" -v end="${path_end}" '
+      $0 == begin { skipping = 1; next }
+      $0 == end { skipping = 0; next }
+      !skipping { print }
+    ' "${shell_file}" > "${temporary_file}"
+    /usr/bin/install -m 0644 "${temporary_file}" "${shell_file}"
+  fi
+done
+
 /usr/bin/pkill -TERM -u "${target_uid}" -f "${bin_directory}/codex-performance-exec-bin --broker" >/dev/null 2>&1 || true
+/bin/launchctl bootout "gui/${target_uid}/${watcher_label}" >/dev/null 2>&1 || true
 /bin/rm -f "${bin_directory}/codex-performance-exec" \
   "${bin_directory}/codex-performance-exec-bin" \
+  "${bin_directory}/codex-performance-register" \
+  "${bin_directory}/codex-performance-app-watcher" \
+  "${bin_directory}/codex-performance-open" \
+  "${shim_directory}/codex" "${shim_directory}/qoder" "${shim_directory}/open" \
   "${run_directory}/performance-broker.sock" \
-  "${run_directory}/performance-broker.sock.lock"
+  "${run_directory}/performance-broker.sock.lock" \
+  "${run_directory}/performance-keeper.sock" "${watcher_plist}"
 
 print "Administrator authorization removes only the fixed QoS keeper and LaunchDaemon."
 /usr/bin/sudo -v

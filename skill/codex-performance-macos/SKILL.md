@@ -1,16 +1,17 @@
 ---
 name: codex-performance-macos
-description: Install, verify, repair, or uninstall the Codex macOS performance broker and narrowly scoped QoS keeper on Apple silicon. Use when ChatGPT or Codex work saturates efficiency cores while performance cores remain underused, when local Codex commands inherit Utility QoS, or when reproducing this scheduling setup on another Mac without granting Codex root privileges.
+description: Install, verify, repair, or uninstall event-driven User Initiated scheduling for ChatGPT, Codex CLI, Qoder IDE, Qoder CLI, and their work-session process trees on Apple silicon without granting agents root privileges.
 ---
 
 # Codex Performance for macOS
 
-Deploy two separate components:
+Deploy three cooperating components:
 
-- a per-user broker that launches local commands with an application role and User Initiated Darwin role; and
-- a root LaunchDaemon that can only reapply that role to an exact allowlist of executables inside `/Applications/ChatGPT.app`.
+- a per-user broker plus CLI/open shims that register work-session roots;
+- a non-root App watcher that consumes `NSWorkspace` launch events; and
+- a root LaunchDaemon that validates the configured UID and reapplies the role to registered process trees using `kqueue` lifecycle events.
 
-Keep Codex and all workload commands non-root. The root keeper exposes no command or IPC interface.
+Keep both agents and all workload commands non-root. The root keeper's local socket cannot execute commands and rejects callers or PIDs outside the configured login UID.
 
 ## Choose an action
 
@@ -27,6 +28,7 @@ Administrator authorization is expected only for installing or removing the fixe
 - Default sustained parallel work to `hw.perflevel0.physicalcpu`; foreground UI remains more important.
 - Do not claim hard performance-core affinity. macOS ultimately chooses physical cores.
 - Treat the Darwin process-role and spawn interfaces as unsupported implementation details that may require repair after a macOS update.
+- Do not replace event tracking with unified-log collection. The keeper performs a 10-second safety scan only while tracked work exists and performs no process scan while idle.
 
 ## Validate changes
 

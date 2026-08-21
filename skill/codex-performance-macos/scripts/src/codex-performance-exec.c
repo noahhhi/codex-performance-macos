@@ -18,6 +18,8 @@
 #include <sys/file.h>
 #include <unistd.h>
 
+#include "performance-client.h"
+
 extern char **environ;
 static char executable_path[PATH_MAX];
 typedef int (*set_darwin_role_fn)(const posix_spawnattr_t *, uint64_t);
@@ -187,6 +189,10 @@ static int handle_connection(int client_fd, uid_t expected_uid) {
         if (spawn_result != 0) {
             dprintf(STDERR_FILENO, "codex-performance-exec: cannot spawn workload: %s\n", strerror(spawn_result));
             _exit(126);
+        }
+        char keeper_socket[PATH_MAX];
+        if (performance_default_socket_path(keeper_socket) == 0) {
+            (void)performance_register_pid(keeper_socket, workload);
         }
         int workload_status = 0;
         while (waitpid(workload, &workload_status, 0) < 0 && errno == EINTR) {}

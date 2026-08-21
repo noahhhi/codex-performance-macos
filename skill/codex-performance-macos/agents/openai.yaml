@@ -1,4 +1,4 @@
 interface:
   display_name: "Codex Performance for macOS"
-  short_description: "Deploy high-priority Codex scheduling safely"
-  default_prompt: "Use $codex-performance-macos to install or verify high-priority Codex scheduling on this Mac."
+  short_description: "Schedule ChatGPT and Qoder work trees"
+  default_prompt: "Use $codex-performance-macos to install or verify event-driven ChatGPT and Qoder scheduling on this Mac."

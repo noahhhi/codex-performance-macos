@@ -4,6 +4,9 @@ set -u
 codex_home=${CODEX_HOME:-${HOME}/.codex}
 wrapper="${codex_home}/bin/codex-performance-exec"
 daemon_label=local.codex.performance-keeper
+watcher_label=local.codex.performance-app-watcher
+keeper_socket="${codex_home}/run/performance-keeper.sock"
+shim_directory="${codex_home}/performance-shims"
 failed=0
 
 print "Architecture: $(/usr/bin/uname -m)"
@@ -24,12 +27,31 @@ else
   failed=1
 fi
 
+if /bin/launchctl print "gui/$(/usr/bin/id -u)/${watcher_label}" >/dev/null 2>&1; then
+  print "App watcher: running (${watcher_label})"
+else
+  print -u2 "App watcher is not running (${watcher_label})."
+  failed=1
+fi
+
+if [[ -S ${keeper_socket} ]]; then
+  print "Event socket: ready"
+else
+  print -u2 "Keeper event socket is missing."
+  failed=1
+fi
+
+for shim in codex qoder open; do
+  if [[ -x ${shim_directory}/${shim} ]]; then
+    print "CLI shim: ${shim}"
+  fi
+done
+
 if [[ -f ${codex_home}/AGENTS.md ]] && \
    /usr/bin/grep -F '<!-- BEGIN codex-performance-macos -->' "${codex_home}/AGENTS.md" >/dev/null; then
   print "AGENTS policy: installed"
 else
-  print -u2 "Managed AGENTS policy is missing."
-  failed=1
+  print "AGENTS policy: no managed block (system scheduling remains active)"
 fi
 
 exit ${failed}
