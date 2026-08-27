@@ -1,19 +1,32 @@
 # Codex Performance for macOS
 
-Deploys an event-driven process-tree scheduler for ChatGPT, Codex CLI, Qoder IDE, and Qoder CLI. Workloads such as CMake, compilers, scripts, and GUI apps opened by an agent are registered as session roots and kept at User Initiated scheduling without running the agents or workloads as root.
+Provides a non-root, direct launcher for Codex CLI and Qoder CLI development
+work on Apple silicon. V2 intentionally does not observe or rewrite existing
+process trees.
 
-This is an unofficial community workaround and is not supported or endorsed by OpenAI or Apple.
+This is an unofficial community workaround and is not supported or endorsed by
+OpenAI or Apple.
 
-## Requirements
+## Why V2
 
-- Apple silicon Mac running macOS 11 or newer
-- ChatGPT and/or Qoder IDE installed in `/Applications`
-- Xcode Command Line Tools (`xcode-select --install`)
-- an administrator account for one installation prompt
+The original implementation used a privileged Keeper, `EVFILT_PROC` lifecycle
+events, process enumeration, and private Darwin role changes. A macOS 27
+WindowServer watchdog report captured that Keeper, `runningboardd`, and an
+executing shell blocked on the same kernel wait object. An older watchdog report
+showed the underlying macOS failure without the tool, but V1 could enter and
+amplify the same vulnerable path. V2 removes that entire architecture.
+
+## What it does
+
+- launches `codex` and `qoder` through Apple's `/usr/sbin/taskpolicy -a`;
+- requests User Initiated QoS in the short-lived launcher before direct execution;
+- lets child commands inherit application/default resource policy;
+- installs no daemon, LaunchAgent, watcher, socket, broker, or root component;
+- performs no PID enumeration, process inspection, periodic scan, or GUI launch interception.
 
 ## Install
 
-Run this in Terminal as your normal login user:
+Requirements: Apple silicon, macOS 11 or newer, and Xcode Command Line Tools.
 
 ```sh
 git clone https://github.com/noahhhi/codex-performance-macos.git
@@ -21,35 +34,31 @@ cd codex-performance-macos
 ./install.sh
 ```
 
-The installer compiles binaries locally, installs the reusable Skill under `~/.codex/skills`, and requests administrator authorization only for the fixed keeper and LaunchDaemon. It also installs a non-root App watcher plus `codex`, `qoder`, and `open` shell shims, with managed PATH blocks in `~/.zshenv` and `~/.zprofile`. Open a new shell after installation; no Qoder Skill or Qoder settings change is required.
+A clean V2 install needs no administrator authorization. Migrating an existing
+V1 installation asks once only to remove the obsolete root-owned helper and
+LaunchDaemon.
 
-Verify at any time:
+Open a new shell after installation, then verify:
 
 ```sh
-~/.codex/skills/codex-performance-macos/scripts/status
+skill/codex-performance-macos/scripts/status
 ```
 
-Uninstall from the checkout or installed Skill:
+Uninstall:
 
 ```sh
 ./uninstall.sh
 ```
 
-## Security model
+## Limitations
 
-- ChatGPT, Qoder, both CLIs, the broker, and all workload commands remain the login user; they never run as root.
-- A non-root `NSWorkspace` observer registers only ChatGPT and Qoder. The `open` shim resolves the requested target App and registers only that PID; it does not inspect another process's arguments or environment.
-- The root keeper's mode-`0600` socket accepts only the configured login UID, validates that each PID belongs to that UID, and can only apply a Darwin scheduling role. It cannot execute commands.
-- Registered roots receive User Initiated before they launch work, so fork/exec descendants inherit the role without waiting for a scan. `kqueue` fork/exec/exit events trigger a 50 ms coalesced process-tree reconciliation for bookkeeping; a 10-second safety reconciliation runs only while tracked work exists. With no tracked App, CLI, or child process, the keeper blocks without scanning.
-- No password, sudo ticket, local account name, UID, home path, token, log, or machine-generated artifact is committed.
+macOS has no supported public API for an external utility to force arbitrary
+third-party Apps and all descendants to User Initiated or to performance cores.
+V2 therefore leaves ChatGPT, Qoder IDE, DingTalk, and other GUI Apps under normal
+macOS/RunningBoard management. It does not provide CPU affinity.
 
-## Important limitations
-
-This does not provide hard CPU affinity. macOS still selects physical cores. The implementation uses Darwin process-role and spawn interfaces that are visible in Apple open-source headers but are not supported public application APIs; a future macOS update may require repair.
-
-The `open` shim can register named or bundle-ID launches such as `open -a DingTalk`. Apps activated through an unrelated automation API without starting or registering a process retain macOS's normal foreground scheduling.
-
-The installer manages only the block between `<!-- BEGIN codex-performance-macos -->` and `<!-- END codex-performance-macos -->` in `~/.codex/AGENTS.md`. Existing instructions outside that block are preserved.
+For sustained builds, use at most `sysctl -n hw.perflevel0.physicalcpu` heavy
+jobs and reduce the count if the foreground UI becomes less responsive.
 
 ## Development
 

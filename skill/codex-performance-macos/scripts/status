@@ -3,55 +3,58 @@ set -u
 
 codex_home=${CODEX_HOME:-${HOME}/.codex}
 wrapper="${codex_home}/bin/codex-performance-exec"
-daemon_label=local.codex.performance-keeper
-watcher_label=local.codex.performance-app-watcher
-keeper_socket="${codex_home}/run/performance-keeper.sock"
 shim_directory="${codex_home}/performance-shims"
+legacy_daemon_label=local.codex.performance-keeper
+legacy_daemon_binary=/Library/PrivilegedHelperTools/local.codex-performance-keeper
+legacy_daemon_plist=/Library/LaunchDaemons/local.codex.performance-keeper.plist
+older_daemon_binary=/Library/PrivilegedHelperTools/local.codex-qos-keeper
+older_daemon_plist=/Library/LaunchDaemons/local.codex.qos-keeper.plist
+legacy_watcher_label=local.codex.performance-app-watcher
+legacy_watcher_plist="${HOME}/Library/LaunchAgents/${legacy_watcher_label}.plist"
 failed=0
 
 print "Architecture: $(/usr/bin/uname -m)"
-if [[ -x ${wrapper} ]]; then
-  if ! "${wrapper}" --self-test; then
-    print -u2 "Broker self-test failed."
-    failed=1
-  fi
+if [[ -x ${wrapper} ]] && "${wrapper}" --self-test; then
+  print "Launcher: V2 direct mode"
 else
-  print -u2 "Missing wrapper: ${wrapper}"
+  print -u2 "V2 launcher is missing or failed self-test: ${wrapper}"
   failed=1
 fi
 
-if /bin/launchctl print "system/${daemon_label}" >/dev/null 2>&1; then
-  print "Keeper: running (${daemon_label})"
-else
-  print -u2 "Keeper is not running (${daemon_label})."
+if [[ -e ${legacy_daemon_binary} || -e ${legacy_daemon_plist} || \
+      -e ${older_daemon_binary} || -e ${older_daemon_plist} ]] || \
+   /bin/launchctl print "system/${legacy_daemon_label}" >/dev/null 2>&1; then
+  print -u2 "Legacy Keeper is still loaded (${legacy_daemon_label})."
   failed=1
+else
+  print "Privileged Keeper: absent"
+fi
+if [[ -e ${legacy_watcher_plist} || \
+      -e ${codex_home}/bin/codex-performance-app-watcher ]] || \
+   /bin/launchctl print "gui/$(/usr/bin/id -u)/${legacy_watcher_label}" >/dev/null 2>&1; then
+  print -u2 "Legacy App watcher is still loaded (${legacy_watcher_label})."
+  failed=1
+else
+  print "App watcher: absent"
 fi
 
-if /bin/launchctl print "gui/$(/usr/bin/id -u)/${watcher_label}" >/dev/null 2>&1; then
-  print "App watcher: running (${watcher_label})"
-else
-  print -u2 "App watcher is not running (${watcher_label})."
-  failed=1
-fi
-
-if [[ -S ${keeper_socket} ]]; then
-  print "Event socket: ready"
-else
-  print -u2 "Keeper event socket is missing."
-  failed=1
-fi
-
-for shim in codex qoder open; do
+for shim in codex qoder; do
   if [[ -x ${shim_directory}/${shim} ]]; then
     print "CLI shim: ${shim}"
+    resolved=$(/bin/zsh -lic "whence -p ${(q)shim}" 2>/dev/null | /usr/bin/head -n 1)
+    if [[ ${resolved:A} != ${shim_directory}/${shim} ]]; then
+      print -u2 "A new interactive shell does not select the ${shim} shim (found: ${resolved:-missing})."
+      failed=1
+    fi
   fi
 done
-
-if [[ -f ${codex_home}/AGENTS.md ]] && \
-   /usr/bin/grep -F '<!-- BEGIN codex-performance-macos -->' "${codex_home}/AGENTS.md" >/dev/null; then
-  print "AGENTS policy: installed"
+if [[ -e ${shim_directory}/open ]]; then
+  print -u2 "Legacy open shim is still installed."
+  failed=1
 else
-  print "AGENTS policy: no managed block (system scheduling remains active)"
+  print "GUI launch interception: disabled"
 fi
 
+print "Process scanning: disabled"
+print "Private Darwin role changes: disabled"
 exit ${failed}

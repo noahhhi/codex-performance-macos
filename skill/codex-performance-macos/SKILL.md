@@ -1,35 +1,34 @@
 ---
 name: codex-performance-macos
-description: Install, verify, repair, or uninstall event-driven User Initiated scheduling for ChatGPT, Codex CLI, Qoder IDE, Qoder CLI, and their work-session process trees on Apple silicon without granting agents root privileges.
+description: Install, verify, repair, or remove a non-root direct launcher that gives Codex and Qoder CLI work application/default scheduling plus a User Initiated thread hint on Apple silicon, without scanning or modifying existing process trees.
 ---
 
 # Codex Performance for macOS
 
-Deploy three cooperating components:
+Use the V2 direct launcher for command-line development work. It combines the
+system `/usr/sbin/taskpolicy -a` interface with an in-process User Initiated QoS request,
+then immediately executes the requested command.
 
-- a per-user broker plus CLI/open shims that register work-session roots;
-- a non-root App watcher that consumes `NSWorkspace` launch events; and
-- a root LaunchDaemon that validates the configured UID and reapplies the role to registered process trees using `kqueue` lifecycle events.
+## Safety boundary
 
-Keep both agents and all workload commands non-root. The root keeper's local socket cannot execute commands and rejects callers or PIDs outside the configured login UID.
+- Keep the launcher and every workload non-root.
+- Do not install a Keeper, App watcher, broker, socket, PID scanner, or periodic task.
+- Do not use `PRIO_DARWIN_ROLE`, `EVFILT_PROC`, process-tree enumeration, private
+  spawn roles, affinity, or negative niceness.
+- Do not promise performance-core placement. macOS selects physical cores.
+- Do not externally promote ChatGPT, Qoder IDE, or GUI Apps. Public macOS APIs do
+  not provide a supported way to force arbitrary third-party process trees to
+  User Initiated.
+- Keep sustained heavy-job concurrency at or below `hw.perflevel0.physicalcpu`;
+  reduce it when foreground responsiveness suffers.
 
-## Choose an action
+## Operations
 
-- Install from a repository checkout: ask the user to run `./install.sh` in Terminal. Do not pipe the installer through a shell or attempt interactive `sudo` through the Codex broker.
-- Verify an installation: run `scripts/status` as the regular user.
-- Repair an installation: inspect `scripts/status`, then ask the user to rerun `./install.sh` in Terminal.
-- Remove it: ask the user to run `./uninstall.sh` in Terminal.
+- Install from a checkout with `./install.sh` as the login user. A new V2 install
+  requires no administrator access; migration prompts only to remove obsolete V1
+  privileged files.
+- Verify with `skill/codex-performance-macos/scripts/status`.
+- Repair by rerunning `./install.sh`.
+- Remove with `./uninstall.sh`.
 
-Administrator authorization is expected only for installing or removing the fixed keeper binary and LaunchDaemon. Never request or persist an administrator password, sudo ticket, credential, or broad sudoers rule.
-
-## Preserve scheduling boundaries
-
-- Use `~/.codex/bin/codex-performance-exec` for local commands after installation.
-- Default sustained parallel work to `hw.perflevel0.physicalcpu`; foreground UI remains more important.
-- Do not claim hard performance-core affinity. macOS ultimately chooses physical cores.
-- Treat the Darwin process-role and spawn interfaces as unsupported implementation details that may require repair after a macOS update.
-- Do not replace event tracking with unified-log collection. The keeper performs a 10-second safety scan only while tracked work exists and performs no process scan while idle.
-
-## Validate changes
-
-Run `scripts/test` after modifying the implementation. Also run the Skill Creator validator against this directory before publishing.
+Run `scripts/test` and the Skill Creator validator after implementation changes.

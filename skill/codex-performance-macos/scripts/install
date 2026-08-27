@@ -15,36 +15,7 @@ if [[ $(/usr/bin/uname -s) != Darwin || $(/usr/bin/uname -m) != arm64 ]]; then
   print -u2 "codex-performance-macos supports Apple silicon Macs only."
   exit 69
 fi
-
-script_directory=${0:A:h}
-skill_directory=${script_directory:h}
-source_directory="${script_directory}/src"
-codex_home=${CODEX_HOME:-${HOME}/.codex}
-bin_directory="${codex_home}/bin"
-shim_directory="${codex_home}/performance-shims"
-run_directory="${codex_home}/run"
-target_skill_directory="${codex_home}/skills/codex-performance-macos"
-target_uid=$(/usr/bin/id -u)
-target_user=$(/usr/bin/id -un)
-daemon_label=local.codex.performance-keeper
-daemon_binary=/Library/PrivilegedHelperTools/local.codex-performance-keeper
-daemon_plist=/Library/LaunchDaemons/local.codex.performance-keeper.plist
-legacy_daemon_label=local.codex.qos-keeper
-legacy_daemon_binary=/Library/PrivilegedHelperTools/local.codex-qos-keeper
-legacy_daemon_plist=/Library/LaunchDaemons/local.codex.qos-keeper.plist
-watcher_label=local.codex.performance-app-watcher
-watcher_binary="${bin_directory}/codex-performance-app-watcher"
-watcher_plist="${HOME}/Library/LaunchAgents/${watcher_label}.plist"
-keeper_socket="${run_directory}/performance-keeper.sock"
-agents_file="${codex_home}/AGENTS.md"
-environment_file="${HOME}/.zshenv"
-profile_file="${HOME}/.zprofile"
-managed_begin='<!-- BEGIN codex-performance-macos -->'
-managed_end='<!-- END codex-performance-macos -->'
-path_begin='# BEGIN codex-performance-macos PATH'
-path_end='# END codex-performance-macos PATH'
-
-if [[ ${target_uid} == 0 ]]; then
+if [[ $(/usr/bin/id -u) == 0 ]]; then
   print -u2 "Run this installer as your normal login user, not with sudo."
   exit 77
 fi
@@ -52,46 +23,39 @@ if ! /usr/bin/xcrun --find clang >/dev/null 2>&1; then
   print -u2 "Xcode Command Line Tools are required. Run: xcode-select --install"
   exit 69
 fi
-if [[ ! -d /Applications/ChatGPT.app && ! -d '/Applications/Qoder IDE.app' ]]; then
-  print -u2 "Install ChatGPT or Qoder IDE in /Applications before continuing."
-  exit 69
-fi
 
-temporary_directory=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/codex-performance.XXXXXX")
+script_directory=${0:A:h}
+source_directory="${script_directory}/src"
+codex_home=${CODEX_HOME:-${HOME}/.codex}
+bin_directory="${codex_home}/bin"
+shim_directory="${codex_home}/performance-shims"
+run_directory="${codex_home}/run"
+environment_file="${HOME}/.zshenv"
+profile_file="${HOME}/.zprofile"
+interactive_file="${HOME}/.zshrc"
+target_uid=$(/usr/bin/id -u)
+target_user=$(/usr/bin/id -un)
+wrapper="${bin_directory}/codex-performance-exec"
+launcher="${bin_directory}/codex-performance-exec-bin"
+path_begin='# BEGIN codex-performance-macos PATH'
+path_end='# END codex-performance-macos PATH'
+
+legacy_daemon_label=local.codex.performance-keeper
+legacy_daemon_binary=/Library/PrivilegedHelperTools/local.codex-performance-keeper
+legacy_daemon_plist=/Library/LaunchDaemons/local.codex.performance-keeper.plist
+older_daemon_label=local.codex.qos-keeper
+older_daemon_binary=/Library/PrivilegedHelperTools/local.codex-qos-keeper
+older_daemon_plist=/Library/LaunchDaemons/local.codex.qos-keeper.plist
+legacy_watcher_label=local.codex.performance-app-watcher
+legacy_watcher_plist="${HOME}/Library/LaunchAgents/${legacy_watcher_label}.plist"
+
+temporary_directory=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/codex-performance-v2.XXXXXX")
 trap '/bin/rm -rf "${temporary_directory}"' EXIT
 
-print "Building host binaries..."
-common_flags=(-O2 -Wall -Wextra -Werror -mmacosx-version-min=11.0)
-/usr/bin/xcrun clang ${common_flags[@]} "${source_directory}/codex-performance-exec.c" "${source_directory}/performance-client.c" -o "${temporary_directory}/codex-performance-exec-bin"
-/usr/bin/xcrun clang ${common_flags[@]} "${source_directory}/codex-qos-keeper.c" -o "${temporary_directory}/codex-qos-keeper"
-/usr/bin/xcrun clang ${common_flags[@]} "${source_directory}/performance-client.c" "${source_directory}/codex-performance-register.c" -o "${temporary_directory}/codex-performance-register"
-/usr/bin/xcrun clang ${common_flags[@]} -fobjc-arc "${source_directory}/performance-client.c" "${source_directory}/codex-performance-app-watcher.m" -framework AppKit -o "${temporary_directory}/codex-performance-app-watcher"
-/usr/bin/xcrun clang ${common_flags[@]} -fobjc-arc "${source_directory}/performance-client.c" "${source_directory}/codex-performance-open.m" -framework AppKit -o "${temporary_directory}/codex-performance-open"
-
-cat > "${temporary_directory}/performance-policy.md" <<EOF
-${managed_begin}
-# Apple silicon performance policy
-
-- Run every local command through ${bin_directory}/codex-performance-exec when available. Exempt only installation, repair, and diagnostics of the broker itself. Codex and its commands must remain non-root.
-- For sustained parallel work, use hw.perflevel0.physicalcpu as the default heavy-job count and reduce it if foreground responsiveness suffers.
-- Use User Initiated QoS. Do not use background or maintenance QoS, negative niceness, administrator scheduling changes, or CPU-affinity hacks unless explicitly requested; macOS ultimately selects physical cores.
-${managed_end}
-EOF
-
-if [[ -f ${agents_file} ]]; then
-  /usr/bin/awk -v begin="${managed_begin}" -v end="${managed_end}" '
-    $0 == begin { skipping = 1; next }
-    $0 == end { skipping = 0; next }
-    !skipping { print }
-  ' "${agents_file}" > "${temporary_directory}/agents-base.md"
-else
-  : > "${temporary_directory}/agents-base.md"
-fi
-{
-  /bin/cat "${temporary_directory}/agents-base.md"
-  [[ ! -s ${temporary_directory}/agents-base.md ]] || print
-  /bin/cat "${temporary_directory}/performance-policy.md"
-} > "${temporary_directory}/AGENTS.md"
+print "Building the non-root V2 launcher..."
+/usr/bin/xcrun clang -O2 -Wall -Wextra -Werror -mmacosx-version-min=11.0 \
+  "${source_directory}/codex-performance-exec.c" \
+  -o "${temporary_directory}/codex-performance-exec-bin"
 
 render_path_file() {
   local source_file=$1 output_file=$2
@@ -115,58 +79,7 @@ render_path_file() {
 }
 render_path_file "${environment_file}" "${temporary_directory}/zshenv"
 render_path_file "${profile_file}" "${temporary_directory}/zprofile"
-
-cat > "${temporary_directory}/${daemon_label}.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${daemon_label}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>${daemon_binary}</string>
-    <string>--uid</string>
-    <string>${target_uid}</string>
-    <string>--socket</string>
-    <string>${keeper_socket}</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>ProcessType</key>
-  <string>Background</string>
-</dict>
-</plist>
-EOF
-
-cat > "${temporary_directory}/${watcher_label}.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${watcher_label}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>${watcher_binary}</string>
-    <string>--socket</string>
-    <string>${keeper_socket}</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>ProcessType</key>
-  <string>Background</string>
-  <key>StandardOutPath</key><string>/dev/null</string>
-  <key>StandardErrorPath</key><string>/dev/null</string>
-</dict>
-</plist>
-EOF
-/usr/bin/plutil -lint "${temporary_directory}/${daemon_label}.plist" >/dev/null
-/usr/bin/plutil -lint "${temporary_directory}/${watcher_label}.plist" >/dev/null
+render_path_file "${interactive_file}" "${temporary_directory}/zshrc"
 
 find_cli_target() {
   local name=$1 fallback=$2 candidate
@@ -187,10 +100,18 @@ make_cli_shim() {
   local output="${temporary_directory}/${name}"
   {
     print '#!/bin/zsh'
-    print -r -- '# Managed by codex-performance-macos.'
-    print -r -- "exec ${(q)bin_directory}/codex-performance-register ${(q)target} \"\$@\""
+    print -r -- '# Managed by codex-performance-macos V2.'
+    print -r -- "exec ${(q)wrapper} ${(q)target} \"\$@\""
   } > "${output}"
   /bin/chmod 0755 "${output}"
+}
+
+install_shell_file() {
+  local source_file=$1 target_file=$2 mode=0644
+  if [[ -e ${target_file} ]]; then
+    mode=$(/usr/bin/stat -f '%Lp' "${target_file}")
+  fi
+  /usr/bin/install -m "${mode}" "${source_file}" "${target_file}"
 }
 
 codex_target=$(find_cli_target codex /Applications/ChatGPT.app/Contents/Resources/codex || true)
@@ -199,49 +120,58 @@ qoder_target=$(find_cli_target qoder "${HOME}/.qoder/entry/qoder" || true)
 [[ -z ${qoder_target} ]] || make_cli_shim qoder "${qoder_target}"
 
 if (( dry_run )); then
-  "${temporary_directory}/codex-qos-keeper" --self-test
-  print "Dry run passed: binaries compile and generated policy, shims, and plists are valid."
+  "${temporary_directory}/codex-performance-exec-bin" --self-test
+  "${temporary_directory}/codex-performance-exec-bin" \
+    "${temporary_directory}/codex-performance-exec-bin" --probe
+  print "Dry run passed: V2 launcher and CLI shims are valid."
   exit 0
 fi
 
-/bin/mkdir -p "${bin_directory}" "${shim_directory}" "${run_directory}" "${codex_home}/skills" "${HOME}/Library/LaunchAgents"
-/usr/bin/install -m 0755 "${temporary_directory}/codex-performance-exec-bin" "${bin_directory}/codex-performance-exec-bin"
-/usr/bin/install -m 0755 "${source_directory}/codex-performance-exec" "${bin_directory}/codex-performance-exec"
-/usr/bin/install -m 0755 "${temporary_directory}/codex-performance-register" "${bin_directory}/codex-performance-register"
-/usr/bin/install -m 0755 "${temporary_directory}/codex-performance-app-watcher" "${watcher_binary}"
-/usr/bin/install -m 0755 "${temporary_directory}/codex-performance-open" "${bin_directory}/codex-performance-open"
-/usr/bin/install -m 0755 "${temporary_directory}/codex-performance-open" "${shim_directory}/open"
+/bin/mkdir -p "${bin_directory}" "${shim_directory}" "${run_directory}"
+/usr/bin/install -m 0755 "${temporary_directory}/codex-performance-exec-bin" "${launcher}"
+/usr/bin/install -m 0755 "${source_directory}/codex-performance-exec" "${wrapper}"
 [[ ! -f ${temporary_directory}/codex ]] || /usr/bin/install -m 0755 "${temporary_directory}/codex" "${shim_directory}/codex"
 [[ ! -f ${temporary_directory}/qoder ]] || /usr/bin/install -m 0755 "${temporary_directory}/qoder" "${shim_directory}/qoder"
-if [[ ${skill_directory:A} != ${target_skill_directory:A} ]]; then
-  /bin/rm -rf "${target_skill_directory}"
-  /usr/bin/ditto "${skill_directory}" "${target_skill_directory}"
-fi
-/usr/bin/install -m 0644 "${temporary_directory}/AGENTS.md" "${agents_file}"
-/usr/bin/install -m 0644 "${temporary_directory}/zshenv" "${environment_file}"
-/usr/bin/install -m 0644 "${temporary_directory}/zprofile" "${profile_file}"
-/usr/bin/install -m 0644 "${temporary_directory}/${watcher_label}.plist" "${watcher_plist}"
+install_shell_file "${temporary_directory}/zshenv" "${environment_file}"
+install_shell_file "${temporary_directory}/zprofile" "${profile_file}"
+install_shell_file "${temporary_directory}/zshrc" "${interactive_file}"
 
-print "Administrator authorization installs only the fixed event-driven keeper and LaunchDaemon."
-/usr/bin/sudo -v
-/usr/bin/sudo /bin/launchctl bootout "system/${legacy_daemon_label}" >/dev/null 2>&1 || true
-/usr/bin/sudo /bin/rm -f "${legacy_daemon_binary}" "${legacy_daemon_plist}"
-/usr/bin/sudo /usr/bin/install -o root -g wheel -m 0755 "${temporary_directory}/codex-qos-keeper" "${daemon_binary}"
-/usr/bin/sudo /usr/bin/install -o root -g wheel -m 0644 "${temporary_directory}/${daemon_label}.plist" "${daemon_plist}"
-/usr/bin/sudo /bin/launchctl bootout "system/${daemon_label}" >/dev/null 2>&1 || true
-/usr/bin/sudo /bin/launchctl bootstrap system "${daemon_plist}"
-/usr/bin/sudo /bin/launchctl kickstart -k "system/${daemon_label}"
-
-/bin/launchctl bootout "gui/${target_uid}/${watcher_label}" >/dev/null 2>&1 || true
-/bin/launchctl bootstrap "gui/${target_uid}" "${watcher_plist}"
-/bin/launchctl kickstart -k "gui/${target_uid}/${watcher_label}"
+# Remove all unprivileged V1 components. V2 intentionally has no App watcher,
+# open shim, process-registration client, broker, socket, or periodic scanner.
+/bin/launchctl bootout "gui/${target_uid}/${legacy_watcher_label}" >/dev/null 2>&1 || true
 /usr/bin/pkill -TERM -u "${target_uid}" -f "${bin_directory}/codex-performance-exec-bin --broker" >/dev/null 2>&1 || true
-/bin/rm -f "${run_directory}/performance-broker.sock" "${run_directory}/performance-broker.sock.lock"
+/bin/rm -f \
+  "${bin_directory}/codex-performance-register" \
+  "${bin_directory}/codex-performance-app-watcher" \
+  "${bin_directory}/codex-performance-open" \
+  "${shim_directory}/open" \
+  "${legacy_watcher_plist}" \
+  "${run_directory}/performance-broker.sock" \
+  "${run_directory}/performance-broker.sock.lock" \
+  "${run_directory}/performance-keeper.sock"
 
-print "Verifying installation..."
-"${bin_directory}/codex-performance-exec" --self-test
-/bin/launchctl print "system/${daemon_label}" >/dev/null
-/bin/launchctl print "gui/${target_uid}/${watcher_label}" >/dev/null
-[[ -S ${keeper_socket} ]]
-/usr/bin/sudo -k
-print "Installed for ${target_user} (uid ${target_uid}). Open a new shell for codex/qoder/open shims."
+legacy_root_present=0
+if [[ -e ${legacy_daemon_binary} || -e ${legacy_daemon_plist} || \
+      -e ${older_daemon_binary} || -e ${older_daemon_plist} ]] || \
+   /bin/launchctl print "system/${legacy_daemon_label}" >/dev/null 2>&1 || \
+   /bin/launchctl print "system/${older_daemon_label}" >/dev/null 2>&1; then
+  legacy_root_present=1
+fi
+if (( legacy_root_present )); then
+  print "Administrator authorization removes obsolete V1 privileged components only."
+  /usr/bin/sudo /bin/launchctl bootout "system/${legacy_daemon_label}" >/dev/null 2>&1 || true
+  /usr/bin/sudo /bin/launchctl bootout "system/${older_daemon_label}" >/dev/null 2>&1 || true
+  /usr/bin/sudo /bin/rm -f "${legacy_daemon_binary}" "${legacy_daemon_plist}" \
+    "${older_daemon_binary}" "${older_daemon_plist}"
+  /usr/bin/sudo -k
+fi
+
+print "Verifying V2 installation..."
+"${wrapper}" --self-test
+if /bin/launchctl print "system/${legacy_daemon_label}" >/dev/null 2>&1 || \
+   /bin/launchctl print "gui/${target_uid}/${legacy_watcher_label}" >/dev/null 2>&1; then
+  print -u2 "A V1 service is still loaded."
+  exit 1
+fi
+print "Installed V2 for ${target_user}: non-root, direct launch, no daemon or process scanning."
+print "Open a new shell for codex/qoder shims. GUI Apps retain normal macOS scheduling."
