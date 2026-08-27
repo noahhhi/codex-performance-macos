@@ -1,4 +1,4 @@
 interface:
   display_name: "Codex Performance for macOS"
-  short_description: "Schedule ChatGPT and Qoder work trees"
-  default_prompt: "Use $codex-performance-macos to install or verify event-driven ChatGPT and Qoder scheduling on this Mac."
+  short_description: "Launch CLI work without process scanning"
+  default_prompt: "Use $codex-performance-macos to install or verify the non-root direct launcher on this Mac."
