@@ -5,6 +5,7 @@ codex_home=${CODEX_HOME:-${HOME}/.codex}
 wrapper="${codex_home}/bin/codex-performance-exec"
 shim_directory="${codex_home}/performance-shims"
 legacy_daemon_label=local.codex.performance-keeper
+older_daemon_label=local.codex.qos-keeper
 legacy_daemon_binary=/Library/PrivilegedHelperTools/local.codex-performance-keeper
 legacy_daemon_plist=/Library/LaunchDaemons/local.codex.performance-keeper.plist
 older_daemon_binary=/Library/PrivilegedHelperTools/local.codex-qos-keeper
@@ -23,7 +24,8 @@ fi
 
 if [[ -e ${legacy_daemon_binary} || -e ${legacy_daemon_plist} || \
       -e ${older_daemon_binary} || -e ${older_daemon_plist} ]] || \
-   /bin/launchctl print "system/${legacy_daemon_label}" >/dev/null 2>&1; then
+   /bin/launchctl print "system/${legacy_daemon_label}" >/dev/null 2>&1 || \
+   /bin/launchctl print "system/${older_daemon_label}" >/dev/null 2>&1; then
   print -u2 "Legacy Keeper is still loaded (${legacy_daemon_label})."
   failed=1
 else

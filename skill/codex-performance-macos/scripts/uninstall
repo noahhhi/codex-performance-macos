@@ -61,10 +61,15 @@ if [[ -e ${legacy_daemon_binary} || -e ${legacy_daemon_plist} || \
 fi
 if (( legacy_root_present )); then
   print "Administrator authorization removes obsolete privileged V1 components only."
-  /usr/bin/sudo /bin/launchctl bootout "system/${legacy_daemon_label}" >/dev/null 2>&1 || true
-  /usr/bin/sudo /bin/launchctl bootout "system/${older_daemon_label}" >/dev/null 2>&1 || true
-  /usr/bin/sudo /bin/rm -f "${legacy_daemon_binary}" "${legacy_daemon_plist}" \
-    "${older_daemon_binary}" "${older_daemon_plist}"
+  /usr/bin/sudo /bin/zsh -f -c '
+    /bin/launchctl bootout system/local.codex.performance-keeper >/dev/null 2>&1 || true
+    /bin/launchctl bootout system/local.codex.qos-keeper >/dev/null 2>&1 || true
+    /bin/rm -f \
+      /Library/PrivilegedHelperTools/local.codex-performance-keeper \
+      /Library/LaunchDaemons/local.codex.performance-keeper.plist \
+      /Library/PrivilegedHelperTools/local.codex-qos-keeper \
+      /Library/LaunchDaemons/local.codex.qos-keeper.plist
+  '
   /usr/bin/sudo -k
 fi
 print "Uninstalled. ChatGPT, Qoder, and GUI Apps use normal macOS scheduling."
